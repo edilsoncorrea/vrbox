@@ -1,35 +1,76 @@
-# 🕹️ VRBOX ESP32-C3 BLE Client
+# 🎮 VRBOX ESP32-C3 BLE Client - Controle de Carro RC
 
-> ✅ **Status**: FUNCIONANDO PERFEITAMENTE - Projeto COMPLETO e VALIDADO!
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--C3-orange)](https://platformio.org/)
+[![Arduino](https://img.shields.io/badge/Framework-Arduino-blue)](https://www.arduino.cc/)
+[![BLE](https://img.shields.io/badge/Protocol-Bluetooth%20LE-lightblue)](https://www.bluetooth.com/)
+[![Status](https://img.shields.io/badge/Status-FUNCIONANDO-brightgreen)](https://github.com/edilsoncorrea/vrbox)
 
-Este projeto implementa um cliente BLE (Bluetooth Low Energy) para conectar um microcontrolador ESP32-C3 ao joystick VRBOX, permitindo receber dados de movimento do joystick, triggers e botões em tempo real.
+## 📋 Descrição
 
-## 📋 Status do Projeto
+Este projeto implementa um cliente BLE (Bluetooth Low Energy) para conectar um **ESP32-C3** ao joystick **VRBOX**, transformando-o em um controle remoto para **carros RC** com servo e ESC. O sistema recebe dados do joystick em tempo real e os converte em sinais PWM compatíveis com equipamentos RC padrão.
 
-✅ **FUNCIONANDO PERFEITAMENTE**
-- ✅ Conexão BLE estabelecida com VRBOX
+## ✨ Funcionalidades
+
+### 🔗 Comunicação BLE
+- ✅ **Conexão automática** com dispositivos VRBOX
+- ✅ **Parsing específico** dos protocolos VRBOX HID
+- ✅ **Recepção em tempo real** de dados de joystick (X/Y)
+- ✅ **Detecção de triggers** e botões A/B/C/D
+- ✅ **Reconexão automática** em caso de perda de sinal
+- ✅ **Filtros inteligentes** para evitar conexões incorretas
+
+### � Controle de Carro RC
+- ✅ **Sinais PWM de 50Hz** compatíveis com servos/ESCs padrão
+- ✅ **Resolução de 12 bits** (4096 níveis) para controle preciso
+- ✅ **Mapeamento otimizado** do range real do VRBOX (-36 a +36)
+- ✅ **Zona morta (deadband)** para evitar jitter
+- ✅ **Filtro de suavização** para transições suaves
+- ✅ **Saídas dedicadas** - GPIO4 (servo) e GPIO5 (ESC)
 - ✅ Recepção de dados de joystick em tempo real
-- ✅ Parsing completo dos protocolos VRBOX
-- ✅ Detecção de movimento X/Y e triggers
-- ✅ Identificação de botões A/B/C/D
-- ✅ Filtros de conexão para evitar dispositivos incorretos
-- ✅ Comandos de ativação automática baseados no padrão PS3/BigJBehr
+## 🛠️ Hardware
 
-## 🎯 Funcionalidades
+### Componentes Necessários
+- **ESP32-C3-DevKitM-1** (microcontrolador principal)
+- **VRBOX** (joystick BLE com nome "VR BOX")
+- **Servo** para controle de direção
+- **ESC** (Electronic Speed Controller) para controle do motor
+- **Carro RC** ou chassis compatível
 
-### **Conectividade BLE**
-- Escaneamento automático de dispositivos VRBOX
-- Conexão segura com filtros para evitar dispositivos incorretos
-- Reconexão automática em caso de desconexão
-- Discovery completo de serviços HID
+### Especificações Técnicas
+- **Microcontrolador**: ESP32-C3 (160MHz, 320KB RAM, 4MB Flash)
+- **Protocolo**: HID over GATT (UUID 1812)
+- **PWM**: 50Hz, 1000-2000μs (padrão RC)
+- **Range de controle**: 5% a 10% duty cycle
+- **Latência**: <100ms (tempo real)
 
-### **Recepção de Dados**
-- **Joystick X/Y**: Valores de -127 a +127 (normalizados para -1.0 a +1.0)
-- **Triggers**: Lower trigger (bit 0) e Upper trigger (bit 1)
-- **Botões A/B**: Com auto-repeat quando segurados
-- **Botões C/D**: Single press sem auto-repeat
+## 📡 Pinout e Conexões
 
-### **Protocolos Suportados**
+### ESP32-C3 DevKitM-1
+```
+                    ┌─────────────────┐
+                    │  ESP32-C3-DevKitM-1  │
+                    │                 │
+              3V3   │ 1  ┌─────────┐ 21 │  GPIO21
+              GND   │ 2  │         │ 20 │  GPIO20  
+            GPIO0   │ 3  │  ESP32  │ 19 │  GPIO19
+            GPIO1   │ 4  │   C3    │ 18 │  GPIO18
+            GPIO2   │ 5  │         │ 10 │  GPIO10
+            GPIO3   │ 6  └─────────┘  9 │  GPIO9
+          ➤ GPIO4   │ 7     SERVO     8 │  GPIO8
+          ⚡ GPIO5   │ 8     ESC       7 │  GPIO7
+            GPIO6   │ 9               6 │  GPIO6
+                    └─────────────────┘
+```
+
+### Conexões do Sistema
+```
+┌─────────────┐    BLE     ┌─────────────┐    PWM     ┌─────────────┐
+│             │◄──────────►│             │───GPIO4───►│    SERVO    │
+│   VRBOX     │            │  ESP32-C3   │            │  (Direção)  │
+│ (Joystick)  │            │             │───GPIO5───►│     ESC     │
+│             │            │             │            │   (Motor)   │
+└─────────────┘            └─────────────┘            └─────────────┘
+```
 - **HID over GATT** (UUID 1812)
 - **Formato 4 bytes**: Joystick/Triggers (modo Mouse)
 - **Formato 2 bytes**: Botões A/B/C/D

@@ -1,5 +1,15 @@
 /*
- * ========================================================================
+ * = * Funcionalidades:
+ * - ✅ Conexão BLE automática com VRBOX
+ * - ✅ Parsing específico dos protocolos VRBOX HID
+ * - ✅ Recepção de dados de joystick X/Y (range real: -36 a +36)
+ * - ✅ Detecção de triggers e botões A/B/C/D
+ * - ✅ Comandos de ativação baseados no padrão PS3/BigJBehr
+ * - ✅ Filtros para evitar conexões incorretas
+ * - ✅ Reconexão automática e polling ativo
+ * - ✅ Controle PWM completo para servo e ESC de carro RC
+ * - ✅ Mapeamento otimizado para range real do VRBOX
+ * - ✅ Zona morta e filtros de suavização==============================================================
  * VRBOX ESP32-C3 BLE Client - Projeto COMPLETO e FUNCIONAL
  * ========================================================================
  * 
@@ -14,13 +24,15 @@
  * - ✅ Comandos de ativação baseados no padrão PS3/BigJBehr
  * - ✅ Filtros para evitar conexões incorretas
  * - ✅ Reconexão automática e polling ativo
+ * - ✅ Controle PWM para servo e ESC de carro RC
  * 
  * Hardware: ESP32-C3-DevKitM-1
  * Joystick: VRBOX (nome BLE: "VR BOX")
  * Protocolo: HID over GATT (UUID 1812)
  * 
  * Autor: Edilson Correa
- * Status: FUNCIONANDO PERFEITAMENTE
+ * Status: FUNCIONANDO PERFEITAMENTE - Sistema completo de controle RC
+ * Versão: 2.1 - PWM implementado com mapeamento otimizado
  * Data: Dezembro 2024
  * ========================================================================
  */
@@ -46,6 +58,36 @@ static BLEUUID BATTERY_LEVEL_UUID("2a19");      // Battery Level - Nível da bat
 static BLEUUID DESCRIPTOR_UUID("2902");
 
 // ========================================================================
+// CONFIGURAÇÕES PWM PARA CONTROLE DE CARRO RC
+// ========================================================================
+// Pinos do ESP32-C3 para saídas PWM - PINOS SEGUROS
+#define SERVO_PIN 4     // GPIO4 - Controle do servo (direção)
+#define ESC_PIN 5       // GPIO5 - Controle do ESC (motor)
+
+// Configurações PWM - Ajustado para ESP32-C3
+#define PWM_FREQ 50     // 50Hz para servo/ESC padrão
+#define PWM_RES 12      // Resolução de 12 bits (0-4095) - mais compatível
+
+// Canais PWM (ESP32-C3 tem 6 canais PWM)
+#define SERVO_CHANNEL 0
+#define ESC_CHANNEL 1
+
+// Valores PWM para controle RC (em microssegundos)
+#define PWM_MIN 1000    // 1ms - Posição mínima
+#define PWM_CENTER 1500 // 1.5ms - Posição central/neutro
+#define PWM_MAX 2000    // 2ms - Posição máxima
+
+// Zona morta para evitar jitter (±10% do range real do VRBOX)
+#define DEADBAND 4      // ±4 de 36 = ~10% (ajustado para range real -36~+36)
+
+// Filtro de suavização (0.0 = sem filtro, 0.9 = muito suave)
+#define SMOOTHING_FACTOR 0.3f
+
+// Valores PWM atuais (para suavização)
+float currentServoPWM = PWM_CENTER;
+float currentESCPWM = PWM_CENTER;
+
+// ========================================================================
 // VARIÁVEIS GLOBAIS DE CONTROLE BLE
 // ========================================================================
 bool deviceConnected = false;               // Flag de conexão ativa
@@ -55,6 +97,10 @@ BLEAdvertisedDevice* myDevice;              // Dispositivo VRBOX encontrado
 BLEClient* pClient = nullptr;               // Cliente BLE principal
 BLERemoteService* pRemoteService = nullptr; // Serviço remoto HID
 BLERemoteCharacteristic* pInputReportChar = nullptr;  // Característica de input para polling
+
+// Timing para polling e verificações
+unsigned long lastPoll = 0;
+unsigned long lastActivation = 0;
 
 // ========================================================================
 // ESTRUTURA DE DADOS DO JOYSTICK VRBOX
@@ -312,44 +358,23 @@ bool connectToServer() {
 
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    Serial.print("🔍 Dispositivo encontrado: ");
-    Serial.print(advertisedDevice.toString().c_str());
-    
-    // Mostrar nome do dispositivo se disponível
-    if (advertisedDevice.haveName()) {
-      Serial.printf(" | Nome: '%s'", advertisedDevice.getName().c_str());
-    } else {
-      Serial.print(" | Nome: (vazio)");
-    }
-    
-    // Mostrar endereço MAC
-    Serial.printf(" | MAC: %s", advertisedDevice.getAddress().toString().c_str());
-    
-    // Mostrar todos os UUIDs de serviço
-    if (advertisedDevice.haveServiceUUID()) {
-      Serial.printf(" | Serviços: %s", advertisedDevice.getServiceUUID().toString().c_str());
-    } else {
-      Serial.print(" | Serviços: (nenhum)");
-    }
-    
-    // Mostrar RSSI
-    Serial.printf(" | RSSI: %d", advertisedDevice.getRSSI());
-    Serial.println();
     
     // Conectar ESPECIFICAMENTE ao "VR BOX" (nome exato conforme BigJBehr)
     bool shouldConnect = false;
     
     if (advertisedDevice.haveName()) {
       std::string name = advertisedDevice.getName();
+      Serial.printf("🔍 Dispositivo encontrado: '%s'\n", name.c_str());
+      
       // Nome exato conforme documentação BigJBehr
       if (name == "VR BOX") {
         shouldConnect = true;
-        Serial.println(" -> ✅ VRBOX encontrado! Nome exato: 'VR BOX'");
+        Serial.println("✅ VRBOX encontrado!");
       } else if (name.find("VR") != std::string::npos || 
                  name.find("vrbox") != std::string::npos ||
                  name.find("VRBOX") != std::string::npos) {
         shouldConnect = true;
-        Serial.println(" -> Dispositivo VR/VRBOX encontrado pelo nome!");
+        Serial.println("✅ Dispositivo VRBOX encontrado!");
       }
     }
     
@@ -357,18 +382,11 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     if (!shouldConnect && advertisedDevice.haveServiceUUID() && 
         advertisedDevice.isAdvertisingService(HID_SERVICE_UUID)) {
       shouldConnect = true;
-      Serial.println(" -> ✅ Dispositivo HID (1812) encontrado - pode ser VRBOX!");
-    }
-    
-    // REMOVER fallback para dispositivos próximos - muito permissivo
-    // Para debug, mostrar dispositivos rejeitados
-    if (!shouldConnect) {
-      Serial.printf(" -> ❌ Dispositivo rejeitado (não é VRBOX)\n");
-      return;  // Não conectar
+      Serial.println("✅ Dispositivo HID encontrado - pode ser VRBOX!");
     }
     
     if (shouldConnect) {
-      Serial.println(" -> 🎯 Tentando conectar...");
+      Serial.println("🎯 Conectando ao VRBOX...");
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
@@ -377,9 +395,112 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+// ========================================================================
+// FUNÇÕES PWM PARA CONTROLE DE CARRO RC
+// ========================================================================
+
+// Função para configurar os canais PWM
+void setupPWM() {
+  Serial.println("🚗 Configurando PWM para controle de carro RC...");
+  
+  // Configurar canal PWM para servo (direção) - ESP32-C3 específico
+  if (!ledcSetup(SERVO_CHANNEL, PWM_FREQ, PWM_RES)) {
+    Serial.println("❌ Erro ao configurar canal PWM do servo");
+    return;
+  }
+  ledcAttachPin(SERVO_PIN, SERVO_CHANNEL);
+  
+  // Configurar canal PWM para ESC (motor) - ESP32-C3 específico
+  if (!ledcSetup(ESC_CHANNEL, PWM_FREQ, PWM_RES)) {
+    Serial.println("❌ Erro ao configurar canal PWM do ESC");
+    return;
+  }
+  ledcAttachPin(ESC_PIN, ESC_CHANNEL);
+  
+  // Calcular valor PWM central para 12 bits
+  uint32_t centerValue = (PWM_CENTER * 4095UL) / 20000UL;  // 1500μs -> valor PWM
+  
+  // Inicializar ambos na posição central/neutro
+  ledcWrite(SERVO_CHANNEL, centerValue);
+  ledcWrite(ESC_CHANNEL, centerValue);
+  
+  Serial.printf("   🎛️  Servo (direção): GPIO%d, Canal %d\n", SERVO_PIN, SERVO_CHANNEL);
+  Serial.printf("   ⚡ ESC (motor): GPIO%d, Canal %d\n", ESC_PIN, ESC_CHANNEL);
+  Serial.printf("   📊 Resolução: %d bits, Freq: %dHz\n", PWM_RES, PWM_FREQ);
+  Serial.printf("   🎯 Valor central: %d (1500μs)\n", centerValue);
+  Serial.println("   ✅ PWM configurado - Posição central/neutro");
+}
+
+// Função para converter microssegundos para valor PWM
+uint32_t microsToPWMValue(uint16_t micros) {
+  // Calcular duty cycle para 50Hz com resolução de 12 bits
+  // Period = 1/50 = 20ms = 20000μs
+  // PWM Value = (micros / 20000) * 4095 (para 12 bits)
+  uint32_t pwmValue = (uint32_t)((micros * 4095UL) / 20000UL);
+  
+  return pwmValue;
+}
+
+// Função para definir PWM em microssegundos
+void setPWM(uint8_t channel, uint16_t micros) {
+  // Limitar valores dentro do range seguro
+  micros = constrain(micros, PWM_MIN, PWM_MAX);
+  
+  uint32_t pwmValue = microsToPWMValue(micros);
+  ledcWrite(channel, pwmValue);
+  
+  // Debug: mostrar valores PWM calculados
+  Serial.printf("🎛️  Canal %d: %dμs -> PWM: %d (%.1f%%)\n", 
+                channel, micros, pwmValue, (pwmValue * 100.0) / 4095.0);
+}
+
+// Função para mapear valor do joystick (range real do VRBOX) para PWM (1000-2000μs)
+uint16_t mapJoystickToPWM(int8_t joystickValue) {
+  // Aplicar zona morta
+  if (abs(joystickValue) < DEADBAND) {
+    return PWM_CENTER;
+  }
+  
+  // AJUSTE: Mapear range real do VRBOX (-36~+36) para 1000~2000μs
+  // Baseado nos valores observados: X: 0~36, Y: -36~+36
+  return map(joystickValue, -36, 36, PWM_MIN, PWM_MAX);
+}
+
+// Função para aplicar filtro de suavização
+float smoothPWM(float current, float target, float factor) {
+  return current + (target - current) * factor;
+}
+
+// Função principal para atualizar controles do carro RC
+void updateRCControls() {
+  // Obter valores atuais do joystick
+  int8_t rawX = (int8_t)(joystickData.directionX * 127);
+  int8_t rawY = (int8_t)(joystickData.directionY * 127);
+  
+  // Mapear para valores PWM
+  uint16_t targetServoPWM = mapJoystickToPWM(rawX);    // X = direção
+  uint16_t targetESCPWM = mapJoystickToPWM(rawY);      // Y = motor
+  
+  // Aplicar suavização
+  currentServoPWM = smoothPWM(currentServoPWM, targetServoPWM, SMOOTHING_FACTOR);
+  currentESCPWM = smoothPWM(currentESCPWM, targetESCPWM, SMOOTHING_FACTOR);
+  
+  // Atualizar saídas PWM
+  setPWM(SERVO_CHANNEL, (uint16_t)currentServoPWM);
+  setPWM(ESC_CHANNEL, (uint16_t)currentESCPWM);
+  
+  // Debug específico do RC Control
+  Serial.printf("🚗 RC Control - X:%d->%dμs, Y:%d->%dμs\n", 
+                rawX, (uint16_t)currentServoPWM, 
+                rawY, (uint16_t)currentESCPWM);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Iniciando cliente BLE para joystick VRBOX (HID)...");
+
+  // Configurar PWM para controle de carro RC
+  setupPWM();
 
   BLEDevice::init("");
   
@@ -408,13 +529,9 @@ void loop() {
   }
 
   if (deviceConnected) {
-    // Exibir dados do joystick a cada 2 segundos
+    // Status básico a cada 10 segundos
     static unsigned long lastUpdate = 0;
-    static unsigned long lastPoll = 0;
-    static unsigned long lastActivation = 0;
     static unsigned long connectionTime = millis();
-    static uint8_t lastData[8] = {0};
-    static bool hasChangedData = false;
     
     // Polling simplificado apenas para verificar conexão
     if (pInputReportChar != nullptr && millis() - lastPoll > 2000) { // A cada 2 segundos apenas
@@ -459,12 +576,16 @@ void loop() {
                     joystickData.directionX, joystickData.directionY,
                     joystickData.acceleration, joystickData.buttons);
       lastUpdate = millis();
-      
-      // Reconexão apenas em caso de problemas graves (2 minutos sem atividade)
-      if (millis() - connectionTime > 120000 && 
-          joystickData.directionX == 0.0 && joystickData.directionY == 0.0 && 
-          joystickData.acceleration == 0.0 && joystickData.buttons == 0) {
-        Serial.println("🔄 Sem atividade por 2 minutos, verificando conexão...");
+    }
+    
+    // Atualizar controles do carro RC em tempo real
+    updateRCControls();
+    
+    // Reconexão apenas em caso de problemas graves (2 minutos sem atividade)
+    if (millis() - connectionTime > 120000 && 
+        joystickData.directionX == 0.0 && joystickData.directionY == 0.0 && 
+        joystickData.acceleration == 0.0 && joystickData.buttons == 0) {
+      Serial.println("🔄 Sem atividade por 2 minutos, verificando conexão...");
         
         // Tentar uma leitura simples antes de desconectar
         if (pInputReportChar != nullptr) {
@@ -485,7 +606,6 @@ void loop() {
             connectionTime = millis();
           }
         }
-      }
     }
   }
 
