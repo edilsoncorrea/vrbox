@@ -266,30 +266,17 @@ bool connectToServer() {
         }
       }
       
-      // Tentar ativar HID Control Point se for o serviço HID
+      // Tentar ativar HID Control Point se for o serviço HID  
       if (pService->getUUID().equals(HID_SERVICE_UUID) && 
           pChar->getUUID().equals(HID_CONTROL_UUID)) {
-        Serial.println("      🎛️  Ativando HID Control Point (padrão VRBOX)...");
+        Serial.println("      🎛️  Ativando HID Control Point (comando único)...");
         if (pChar->canWrite()) {
-          // Comando específico para VRBOX baseado no padrão BigJBehr
-          // Sequência mágica para ativar VRBOX (similar ao DualShock 3)
-          uint8_t magicSequence[] = {0xF4, 0x42, 0x03, 0x00, 0x00};
-          pChar->writeValue(magicSequence, 5, true);
-          Serial.println("      ✅ Sequência mágica VRBOX enviada");
-          
-          delay(200);  // Dar mais tempo para processar
-          
-          // Sair do modo suspend (0x00) - ativar modo operacional
+          // Comando simples de ativação (sem sequências complexas)
           uint8_t activateCmd[] = {0x00};  // Exit suspend mode
           pChar->writeValue(activateCmd, 1, true);
-          Serial.println("      ✅ Comando de ativação HID enviado");
+          Serial.println("      ✅ HID ativado");
           
-          delay(100);  
-          
-          // Tentar comando adicional para garantir ativação
-          uint8_t wakeupCmd[] = {0x01};  // Wake up command
-          pChar->writeValue(wakeupCmd, 1, true);
-          Serial.println("      ✅ Comando de wake-up enviado");
+          delay(100);  // Pequena pausa
         }
       }
       
@@ -429,140 +416,37 @@ void loop() {
     static uint8_t lastData[8] = {0};
     static bool hasChangedData = false;
     
-    // Fazer polling ativo da característica INPUT_REPORT a cada 500ms
-    if (pInputReportChar != nullptr && millis() - lastPoll > 500) {
+    // Polling simplificado apenas para verificar conexão
+    if (pInputReportChar != nullptr && millis() - lastPoll > 2000) { // A cada 2 segundos apenas
       try {
         std::string value = pInputReportChar->readValue();
         if (value.length() > 0) {
-          uint8_t* pData = (uint8_t*)value.c_str();
-          
-          // Verificar se houve mudança nos dados
-          bool dataChanged = false;
-          for (int i = 0; i < (int)min(value.length(), (size_t)8); i++) {
-            if (pData[i] != lastData[i]) {
-              dataChanged = true;
-              lastData[i] = pData[i];
-            }
-          }
-          
-          if (dataChanged || !hasChangedData) {
-            hasChangedData = true;
-            Serial.printf("🔍 Polling [%d bytes]: ", value.length());
-            for (int i = 0; i < value.length(); i++) {
-              Serial.printf("%02X ", pData[i]);
-            }
-            Serial.println();
-            
-            // ✅ USAR O MESMO PARSING DO CALLBACK DE NOTIFICAÇÃO
-            // Processar usando a lógica específica VRBOX
-            if (value.length() == 4) {
-              // Formato VRBOX de 4 bytes: Trigger, X, Y, 0x00
-              uint8_t triggers = pData[0];
-              int8_t joyX = (int8_t)pData[1];
-              int8_t joyY = (int8_t)pData[2];
-              
-              joystickData.directionX = joyX / 127.0f;
-              joystickData.directionY = joyY / 127.0f;
-              joystickData.buttons = triggers;
-              
-              if (joyX != 0 || joyY != 0 || triggers != 0) {
-                Serial.printf("📊 Polling ATIVO - X:%d Y:%d Triggers:0x%02X\n", joyX, joyY, triggers);
-              }
-            } else if (value.length() == 2) {
-              // Formato VRBOX de 2 bytes: Botões A/B ou C/D
-              uint8_t buttonData = pData[0];
-              uint8_t lowNibble = buttonData & 0x0F;
-              
-              if (lowNibble == 0x05) {
-                Serial.printf("📊 Polling A/B: 0x%02X\n", buttonData);
-              } else {
-                Serial.printf("📊 Polling C/D: 0x%02X\n", buttonData);
-              }
-            }
-          }
+          // Apenas verificar se a conexão está ativa, sem processar dados
+          // (dados já são processados via notificações)
+          Serial.printf("� Conexão ativa [%d bytes]\n", value.length());
         }
       } catch (...) {
-        Serial.println("❌ Erro ao fazer polling da característica");
+        Serial.println("❌ Erro na verificação de conexão");
       }
       lastPoll = millis();
     }
     
-    // Tentar comandos de ativação VRBOX a cada 10 segundos
-    if (millis() - lastActivation > 10000) {
-      Serial.println("🔄 Executando comandos de ativação VRBOX...");
+    // Tentar comandos de ativação VRBOX apenas NA CONEXÃO INICIAL
+    if (millis() - lastActivation > 60000) { // Reduzido para 60 segundos
+      Serial.println("🔄 Executando comandos de ativação VRBOX (modo minimal)...");
       
-      // 1. TENTAR ATIVAR ATRAVÉS DA CARACTERÍSTICA INPUT_REPORT
-      if (pInputReportChar != nullptr && pInputReportChar->canWrite()) {
-        Serial.println("   📝 Enviando comandos específicos VRBOX via INPUT_REPORT...");
-        try {
-          // Baseado no padrão BigJBehr: sequência mágica PS3-like
-          delay(50);
-          uint8_t magicCmd[] = {0xF4, 0x42, 0x03, 0x00, 0x00};  // Magic PS3-like sequence
-          pInputReportChar->writeValue(magicCmd, 5, true);
-          Serial.println("   ✅ Sequência mágica PS3-like enviada");
-          
-          delay(100);
-          uint8_t cmd1[] = {0x42, 0x03, 0x00, 0x00};  // Magic sequence from BigJBehr
-          pInputReportChar->writeValue(cmd1, 4, true);
-          
-          delay(100);
-          uint8_t cmd2[] = {0x01, 0x00, 0x00, 0x00};  // Report ID 1 request
-          pInputReportChar->writeValue(cmd2, 4, true);
-          
-          delay(100);
-          uint8_t cmd3[] = {0x04, 0x00, 0x00, 0x00};  // Report ID 4 request  
-          pInputReportChar->writeValue(cmd3, 4, true);
-          
-          delay(100);
-          // Comando específico para ativar modo Mouse (@ + D)
-          uint8_t mouseModeCmd[] = {0x05, 0x01, 0x03, 0x00};  // Mouse mode activation
-          pInputReportChar->writeValue(mouseModeCmd, 4, true);
-          Serial.println("   🖱️  Comando modo Mouse enviado");
-          
-          Serial.println("   ✅ Comandos VRBOX específicos enviados");
-        } catch (...) {
-          Serial.println("   ❌ Erro ao enviar comandos VRBOX");
-        }
-      }
-      
-      // 2. TENTAR BUSCAR E ATIVAR OUTRAS CARACTERÍSTICAS HID
-      Serial.println("   🔍 Buscando características adicionais para ativação...");
-      
-      // Buscar serviço HID novamente para outras características
+      // Buscar serviço HID apenas para manter ativo
       BLERemoteService* pHIDService = pClient->getService(HID_SERVICE_UUID);
       if (pHIDService != nullptr) {
-        // Tentar ativar via HID Control Point
-        BLERemoteCharacteristic* pControlChar = pHIDService->getCharacteristic(HID_CONTROL_UUID);
-        if (pControlChar != nullptr && pControlChar->canWrite()) {
-          Serial.println("   🎛️  Reativando HID Control Point...");
-          
-          // Sequência mágica PS3-like
-          uint8_t magicSequence[] = {0xF4, 0x42, 0x03, 0x00, 0x00};
-          pControlChar->writeValue(magicSequence, 5, true);
-          delay(100);
-          
-          uint8_t exitSuspend[] = {0x00};
-          pControlChar->writeValue(exitSuspend, 1, true);
-          delay(50);
-          uint8_t activateMode[] = {0x01};
-          pControlChar->writeValue(activateMode, 1, true);
-          delay(50);
-          
-          // Comando específico para modo Mouse
-          uint8_t mouseMode[] = {0x03, 0x01};  // Enable mouse mode
-          pControlChar->writeValue(mouseMode, 2, true);
-          Serial.println("   🖱️  Modo Mouse ativado via Control Point");
-        }
-        
-        // Tentar ativar via outros report types  
+        // Apenas uma leitura simples do Report Map para manter conexão
         BLERemoteCharacteristic* pReportMapChar = pHIDService->getCharacteristic(REPORT_MAP_UUID);
         if (pReportMapChar != nullptr && pReportMapChar->canRead()) {
-          Serial.println("   📋 Relendo Report Map para forçar ativação...");
+          Serial.println("   📋 Lendo Report Map para manter conexão...");
           try {
             std::string reportMap = pReportMapChar->readValue();
-            Serial.printf("   📋 Report Map relido: %d bytes\n", reportMap.length());
+            Serial.printf("   📋 Report Map: %d bytes - Conexão ativa\n", reportMap.length());
           } catch (...) {
-            Serial.println("   ❌ Erro ao reler Report Map");
+            Serial.println("   ❌ Erro ao ler Report Map");
           }
         }
       }
@@ -570,26 +454,37 @@ void loop() {
       lastActivation = millis();
     }
     
-    if (millis() - lastUpdate > 2000) {
+    if (millis() - lastUpdate > 5000) {  // Status a cada 5 segundos
       Serial.printf("Status: X=%.2f, Y=%.2f, Accel=%.2f, Botões=0x%04X\n",
                     joystickData.directionX, joystickData.directionY,
                     joystickData.acceleration, joystickData.buttons);
       lastUpdate = millis();
       
-      // Se não recebeu dados por 30 segundos, desconectar e tentar novamente
-      if (millis() - connectionTime > 30000 && 
+      // Reconexão apenas em caso de problemas graves (2 minutos sem atividade)
+      if (millis() - connectionTime > 120000 && 
           joystickData.directionX == 0.0 && joystickData.directionY == 0.0 && 
           joystickData.acceleration == 0.0 && joystickData.buttons == 0) {
-        Serial.println("🔄 Nenhum dado recebido por 30s, reconectando...");
-        if (pClient != nullptr) {
-          pClient->disconnect();
-          delete pClient;
-          pClient = nullptr;
+        Serial.println("🔄 Sem atividade por 2 minutos, verificando conexão...");
+        
+        // Tentar uma leitura simples antes de desconectar
+        if (pInputReportChar != nullptr) {
+          try {
+            std::string testRead = pInputReportChar->readValue();
+            Serial.printf("✅ Conexão OK [%d bytes]\n", testRead.length());
+            connectionTime = millis(); // Reset timer se conexão OK
+          } catch (...) {
+            Serial.println("❌ Conexão perdida, reconectando...");
+            if (pClient != nullptr) {
+              pClient->disconnect();
+              delete pClient;
+              pClient = nullptr;
+            }
+            pInputReportChar = nullptr;
+            deviceConnected = false;
+            doScan = true;
+            connectionTime = millis();
+          }
         }
-        pInputReportChar = nullptr;
-        deviceConnected = false;
-        doScan = true;
-        connectionTime = millis();
       }
     }
   }

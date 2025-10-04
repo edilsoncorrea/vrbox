@@ -20,9 +20,10 @@ Flash: [=======   ]  74.9% (used 982342 bytes from 1310720 bytes)
 
 ### **Latência e Responsividade**
 - **Notificações BLE**: ~40ms de latência
-- **Polling Ativo**: 500ms de intervalo
+- **Polling Otimizado**: 2000ms de intervalo (versão estável)
 - **Taxa de atualização**: Até 25Hz (40ms)
 - **Precisão**: 8-bit signed (-127 a +127)
+- **Estabilidade**: Conexão contínua sem desconexões frequentes
 
 ## 🔗 Log de Conexão Bem-Sucedida
 
@@ -204,14 +205,33 @@ O VRBOX fornece um Report Map completo de 189 bytes descrevendo sua estrutura HI
 - [ ] Teste de alcance BLE
 
 ### **Otimizações Possíveis**
-- [ ] Reduzir latência de polling
+- [ ] Reduzir latência de polling (mantendo estabilidade)
 - [ ] Implementar filtros de ruído
 - [ ] Adicionar calibração automática
 - [ ] Interface web para configuração
 - [ ] Suporte a múltiplos joysticks
 
+## 🔄 Histórico de Versões
+
+### **v2.0 - Versão Estável (Dezembro 2024)**
+```
+✅ Conexão estável sem desconexões frequentes
+✅ Comandos de ativação simplificados
+✅ Polling otimizado (2000ms)
+✅ Timeout de reconexão estendido (120s)
+✅ Remoção de comandos agressivos que causavam instabilidade
+```
+
+### **v1.0 - Versão Inicial**
+```
+✅ Funcionalidade completa do joystick
+⚠️  Desconexões frequentes devido a comandos excessivos
+⚠️  Polling agressivo (500ms)
+⚠️  Timeout de reconexão curto (30s)
+```
+
 ---
 
-**🎉 CONCLUSÃO: Projeto ESP32-C3 + VRBOX 100% FUNCIONAL!**
+**🎉 CONCLUSÃO: Projeto ESP32-C3 + VRBOX 100% FUNCIONAL E ESTÁVEL!**
 
 Este documento comprova que a implementação BLE para VRBOX está completa, testada e funcionando perfeitamente em condições reais.

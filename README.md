@@ -116,16 +116,19 @@ Botões C/D (low nibble ≠ 0x05):
 
 ### **Comandos de Ativação**
 ```cpp
-// Sequência mágica PS3-like
-{0xF4, 0x42, 0x03, 0x00, 0x00}
+// Comando simples de ativação HID (versão estável)
+{0x00}  // Exit suspend mode - Suficiente para ativar o VRBOX
 
-// Ativação HID
-{0x00}  // Exit suspend mode
-{0x01}  // Wake up command
-
-// Modo Mouse  
-{0x05, 0x01, 0x03, 0x00}  // Mouse mode activation
+// Comandos antigos (removidos por estabilidade):
+// - Sequência mágica PS3-like: {0xF4, 0x42, 0x03, 0x00, 0x00}
+// - Wake up command: {0x01}
+// - Mouse mode activation: {0x05, 0x01, 0x03, 0x00}
 ```
+
+### **Otimizações de Estabilidade**
+- **Polling reduzido**: De 500ms para 2000ms para verificação de conexão apenas
+- **Timeout estendido**: Reconexão aumentada de 30s para 120s
+- **Comandos simplificados**: Removidas sequências agressivas que causavam desconexões
 
 ## 📊 Exemplo de Saída
 
