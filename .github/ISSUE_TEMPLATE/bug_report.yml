@@ -1,0 +1,75 @@
+name: Bug Report
+description: Create a report to help us improve
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      description: What ESP32 board are you using?
+      options:
+        - ESP32 DevKit
+        - ESP32 WROOM-32
+        - ESP32-C3
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: joystick
+    attributes:
+      label: Joystick Model
+      description: What VRBOX joystick model are you using?
+      options:
+        - VRBOX Standard
+        - VRBOX 2.0
+        - Generic VR Remote
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Also tell us, what did you expect to happen?
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+
+  - type: textarea
+    id: serial-output
+    attributes:
+      label: Serial Monitor Output
+      description: Please copy and paste any relevant serial monitor output
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Connect ESP32
+        2. Upload code
+        3. Turn on joystick
+        4. See error
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our Code of Conduct
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
