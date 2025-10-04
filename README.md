@@ -78,6 +78,11 @@ pio run --target upload
 pio run --target upload --upload-port COM3
 ```
 
+> ⚠️ **Problema com ESP32-C3 no Windows?** 
+> O ESP32-C3 pode precisar de drivers USB específicos. Veja o [Guia de Drivers ESP32-C3](ESP32_C3_DRIVERS.md) para resolver problemas de detecção USB.
+>
+> **Solução rápida**: Use um ESP32 DevKit padrão que tem melhor compatibilidade de drivers no Windows.
+
 ### 4. Monitor Serial (Debug)
 
 ```bash
@@ -173,6 +178,13 @@ pio run
 #### ❌ **ESP32-C3 não funciona**
 - ⚠️ **Usar ESP32 padrão**: Projeto otimizado para ESP32 clássico
 - ✅ Para ESP32-C3: usar versão BLE (`main_ble.cpp`)
+
+#### ❌ **ESP32-C3 não é detectado (Windows)**
+- 🔌 **Problema de drivers**: ESP32-C3 usa USB nativo que pode precisar de drivers específicos
+- ✅ **Instalar drivers**: Veja [Guia de Drivers ESP32-C3](ESP32_C3_DRIVERS.md)
+- ✅ **Verificar dispositivos**: `pio device list` deve mostrar uma porta COM
+- ✅ **Modo download**: Segure BOOT + RESET, solte RESET, conecte USB, solte BOOT
+- 🔄 **Alternativa**: Use ESP32 DevKit padrão (drivers mais estáveis)
 
 ### Versões Alternativas
 
