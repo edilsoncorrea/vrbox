@@ -125,19 +125,23 @@ static BLEUUID DESCRIPTOR_UUID("2902");
 #define SERVO_CHANNEL 0
 #define ESC_CHANNEL 1
 
-// Valores PWM para controle RC (em microssegundos)
+// Valores PWM para controle RC (em microssegundos) - RANGE REDUZIDO PARA MOVIMENTO FINO
 #define PWM_MIN 1000    // 1ms - Posição mínima
 #define PWM_CENTER 1500 // 1.5ms - Posição central/neutro
 #define PWM_MAX 2000    // 2ms - Posição máxima
 
-// Zona morta para evitar jitter (±10% do range real do VRBOX)
-#define DEADBAND 4      // ±4 de 36 = ~10% (ajustado para range real -36~+36)
+// RANGE REDUZIDO para movimento mais fino (75% do range total)
+#define PWM_FINE_MIN 1125   // 1.125ms - Mínimo para movimento fino (75% de 1500-1000 = 375μs)
+#define PWM_FINE_MAX 1875   // 1.875ms - Máximo para movimento fino (75% de 2000-1500 = 375μs)
 
-// Filtro de suavização OTIMIZADO para servos (0.0 = sem filtro, 0.9 = muito suave)
-#define SMOOTHING_FACTOR 0.8f  // Aumentado para movimento mais suave
+// Zona morta MAIOR para evitar jitter (±15% do range do VRBOX)
+#define DEADBAND 6      // ±6 de 36 = ~15% (mais zona morta para movimento mais estável)
 
-// Controle de timing para evitar spam de comandos PWM
-#define PWM_UPDATE_INTERVAL 50  // Atualizar PWM a cada 50ms (20Hz)
+// Filtro de suavização MUITO ALTO para movimento super fluído
+#define SMOOTHING_FACTOR 0.92f  // Muito suave, quase sem saltos
+
+// Controle de timing MAIS RÁPIDO para resposta melhor
+#define PWM_UPDATE_INTERVAL 25  // Atualizar PWM a cada 25ms (40Hz) - mais responsivo
 
 // Valores PWM atuais (para suavização)
 float currentServoPWM = PWM_CENTER;
@@ -521,28 +525,55 @@ void setPWM(uint8_t channel, uint16_t micros) {
                 channel, micros, pwmValue, (pwmValue * 100.0) / 1023.0);
 }
 
-// Função para mapear valor do joystick (range real do VRBOX) para PWM (1000-2000μs)
+// Função para mapear valor do joystick com CURVA SUAVE e RANGE REDUZIDO
 uint16_t mapJoystickToPWM(int8_t joystickValue) {
   // Aplicar zona morta
   if (abs(joystickValue) < DEADBAND) {
     return PWM_CENTER;
   }
   
-  // AJUSTE: Mapear range real do VRBOX (-36~+36) para 1000~2000μs
-  // Baseado nos valores observados: X: 0~36, Y: -36~+36
-  return map(joystickValue, -36, 36, PWM_MIN, PWM_MAX);
+  // Normalizar para -1.0 a +1.0, removendo a zona morta
+  float normalizedValue;
+  if (joystickValue > 0) {
+    normalizedValue = (float)(joystickValue - DEADBAND) / (36 - DEADBAND);
+  } else {
+    normalizedValue = (float)(joystickValue + DEADBAND) / (36 - DEADBAND);
+  }
+  
+  // Limitar para -1.0 a +1.0
+  normalizedValue = constrain(normalizedValue, -1.0f, 1.0f);
+  
+  // Aplicar curva suave (função cubic para transição mais suave)
+  // y = x³ dá mais resolução no centro, menos nos extremos
+  float cubicValue = normalizedValue * normalizedValue * normalizedValue;
+  
+  // Mapear para o range reduzido (PWM_FINE_MIN a PWM_FINE_MAX)
+  uint16_t pwmValue;
+  if (cubicValue >= 0) {
+    pwmValue = PWM_CENTER + (uint16_t)(cubicValue * (PWM_FINE_MAX - PWM_CENTER));
+  } else {
+    pwmValue = PWM_CENTER - (uint16_t)(-cubicValue * (PWM_CENTER - PWM_FINE_MIN));
+  }
+  
+  return constrain(pwmValue, PWM_FINE_MIN, PWM_FINE_MAX);
 }
 
-// Função para aplicar filtro de suavização MELHORADO
+// Função para aplicar filtro de suavização ULTRA REFINADO
 float smoothPWM(float current, float target, float factor) {
   float diff = target - current;
   
   // Se a diferença for muito pequena, não atualizar (evita jitter)
-  if (abs(diff) < 5.0f) {
+  if (abs(diff) < 2.0f) {  // Reduzido de 5.0f para 2.0f - mais sensível
     return current;
   }
   
-  return current + diff * factor;
+  // Aplicar suavização progressiva: mais suave para pequenas diferenças
+  float adaptiveFactor = factor;
+  if (abs(diff) < 10.0f) {
+    adaptiveFactor = factor * 0.5f;  // Ainda mais suave para pequenos movimentos
+  }
+  
+  return current + diff * adaptiveFactor;
 }
 
 // Função principal para atualizar controles do carro RC COM CONTROLE DE TIMING
@@ -567,8 +598,8 @@ void updateRCControls() {
   float newESCPWM = smoothPWM(currentESCPWM, targetESCPWM, SMOOTHING_FACTOR);
   
   // Só atualizar se houve mudança significativa (evita spam de comandos)
-  bool servoChanged = abs(newServoPWM - currentServoPWM) >= 1.0f;
-  bool escChanged = abs(newESCPWM - currentESCPWM) >= 1.0f;
+  bool servoChanged = abs(newServoPWM - currentServoPWM) >= 0.5f;  // Mais sensível (0.5μs)
+  bool escChanged = abs(newESCPWM - currentESCPWM) >= 0.5f;
   
   if (servoChanged) {
     currentServoPWM = newServoPWM;
@@ -580,11 +611,12 @@ void updateRCControls() {
     setPWM(ESC_CHANNEL, (uint16_t)currentESCPWM);
   }
   
-  // Debug específico do RC Control (apenas quando há mudanças)
+  // Debug específico do RC Control (apenas quando há mudanças) - MODO REFINADO
   if (servoChanged || escChanged) {
-    LOG_RC("RC Control - X:%d->%dμs%s, Y:%d->%dμs%s\n", 
+    LOG_RC("RC Fine Control - X:%d->%dμs%s, Y:%d->%dμs%s [Range: %d-%dμs]\n", 
                   rawX, (uint16_t)currentServoPWM, servoChanged ? " ✓" : "",
-                  rawY, (uint16_t)currentESCPWM, escChanged ? " ✓" : "");
+                  rawY, (uint16_t)currentESCPWM, escChanged ? " ✓" : "",
+                  PWM_FINE_MIN, PWM_FINE_MAX);
   }
   
   lastPWMUpdate = millis();
