@@ -117,9 +117,9 @@ static BLEUUID DESCRIPTOR_UUID("2902");
 #define SERVO_PIN 4     // GPIO4 - Controle do servo (direção)
 #define ESC_PIN 5       // GPIO5 - Controle do ESC (motor)
 
-// Configurações PWM - Ajustado para ESP32-C3
+// Configurações PWM - Otimizado para servos suaves
 #define PWM_FREQ 50     // 50Hz para servo/ESC padrão
-#define PWM_RES 12      // Resolução de 12 bits (0-4095) - mais compatível
+#define PWM_RES 10      // Resolução de 10 bits (0-1023) - mais estável para servos
 
 // Canais PWM (ESP32-C3 tem 6 canais PWM)
 #define SERVO_CHANNEL 0
@@ -133,8 +133,11 @@ static BLEUUID DESCRIPTOR_UUID("2902");
 // Zona morta para evitar jitter (±10% do range real do VRBOX)
 #define DEADBAND 4      // ±4 de 36 = ~10% (ajustado para range real -36~+36)
 
-// Filtro de suavização (0.0 = sem filtro, 0.9 = muito suave)
-#define SMOOTHING_FACTOR 0.3f
+// Filtro de suavização OTIMIZADO para servos (0.0 = sem filtro, 0.9 = muito suave)
+#define SMOOTHING_FACTOR 0.8f  // Aumentado para movimento mais suave
+
+// Controle de timing para evitar spam de comandos PWM
+#define PWM_UPDATE_INTERVAL 50  // Atualizar PWM a cada 50ms (20Hz)
 
 // Valores PWM atuais (para suavização)
 float currentServoPWM = PWM_CENTER;
@@ -481,8 +484,8 @@ void setupPWM() {
   }
   ledcAttachPin(ESC_PIN, ESC_CHANNEL);
   
-  // Calcular valor PWM central para 12 bits
-  uint32_t centerValue = (PWM_CENTER * 4095UL) / 20000UL;  // 1500μs -> valor PWM
+  // Calcular valor PWM central para 10 bits
+  uint32_t centerValue = (PWM_CENTER * 1023UL) / 20000UL;  // 1500μs -> valor PWM
   
   // Inicializar ambos na posição central/neutro
   ledcWrite(SERVO_CHANNEL, centerValue);
@@ -495,12 +498,12 @@ void setupPWM() {
   LOG_IMPORTANT("   ✅ PWM configurado - Posição central/neutro\n");
 }
 
-// Função para converter microssegundos para valor PWM
+// Função para converter microssegundos para valor PWM (10 bits)
 uint32_t microsToPWMValue(uint16_t micros) {
-  // Calcular duty cycle para 50Hz com resolução de 12 bits
+  // Calcular duty cycle para 50Hz com resolução de 10 bits
   // Period = 1/50 = 20ms = 20000μs
-  // PWM Value = (micros / 20000) * 4095 (para 12 bits)
-  uint32_t pwmValue = (uint32_t)((micros * 4095UL) / 20000UL);
+  // PWM Value = (micros / 20000) * 1023 (para 10 bits)
+  uint32_t pwmValue = (uint32_t)((micros * 1023UL) / 20000UL);
   
   return pwmValue;
 }
@@ -515,7 +518,7 @@ void setPWM(uint8_t channel, uint16_t micros) {
   
   // Debug: mostrar valores PWM calculados
   LOG_PWM("Canal %d: %dμs -> PWM: %d (%.1f%%)\n", 
-                channel, micros, pwmValue, (pwmValue * 100.0) / 4095.0);
+                channel, micros, pwmValue, (pwmValue * 100.0) / 1023.0);
 }
 
 // Função para mapear valor do joystick (range real do VRBOX) para PWM (1000-2000μs)
@@ -530,33 +533,61 @@ uint16_t mapJoystickToPWM(int8_t joystickValue) {
   return map(joystickValue, -36, 36, PWM_MIN, PWM_MAX);
 }
 
-// Função para aplicar filtro de suavização
+// Função para aplicar filtro de suavização MELHORADO
 float smoothPWM(float current, float target, float factor) {
-  return current + (target - current) * factor;
+  float diff = target - current;
+  
+  // Se a diferença for muito pequena, não atualizar (evita jitter)
+  if (abs(diff) < 5.0f) {
+    return current;
+  }
+  
+  return current + diff * factor;
 }
 
-// Função principal para atualizar controles do carro RC
+// Função principal para atualizar controles do carro RC COM CONTROLE DE TIMING
 void updateRCControls() {
+  static unsigned long lastPWMUpdate = 0;
+  
+  // Controle de frequência: só atualizar a cada PWM_UPDATE_INTERVAL ms
+  if (millis() - lastPWMUpdate < PWM_UPDATE_INTERVAL) {
+    return;  // Ainda não é hora de atualizar
+  }
+  
   // Obter valores atuais do joystick
   int8_t rawX = (int8_t)(joystickData.directionX * 127);
   int8_t rawY = (int8_t)(joystickData.directionY * 127);
   
-  // Mapear para valores PWM
+  // Mapear para valores PWM com tratamento melhorado
   uint16_t targetServoPWM = mapJoystickToPWM(rawX);    // X = direção
   uint16_t targetESCPWM = mapJoystickToPWM(rawY);      // Y = motor
   
-  // Aplicar suavização
-  currentServoPWM = smoothPWM(currentServoPWM, targetServoPWM, SMOOTHING_FACTOR);
-  currentESCPWM = smoothPWM(currentESCPWM, targetESCPWM, SMOOTHING_FACTOR);
+  // Aplicar suavização MELHORADA
+  float newServoPWM = smoothPWM(currentServoPWM, targetServoPWM, SMOOTHING_FACTOR);
+  float newESCPWM = smoothPWM(currentESCPWM, targetESCPWM, SMOOTHING_FACTOR);
   
-  // Atualizar saídas PWM
-  setPWM(SERVO_CHANNEL, (uint16_t)currentServoPWM);
-  setPWM(ESC_CHANNEL, (uint16_t)currentESCPWM);
+  // Só atualizar se houve mudança significativa (evita spam de comandos)
+  bool servoChanged = abs(newServoPWM - currentServoPWM) >= 1.0f;
+  bool escChanged = abs(newESCPWM - currentESCPWM) >= 1.0f;
   
-  // Debug específico do RC Control
-  LOG_RC("RC Control - X:%d->%dμs, Y:%d->%dμs\n", 
-                rawX, (uint16_t)currentServoPWM, 
-                rawY, (uint16_t)currentESCPWM);
+  if (servoChanged) {
+    currentServoPWM = newServoPWM;
+    setPWM(SERVO_CHANNEL, (uint16_t)currentServoPWM);
+  }
+  
+  if (escChanged) {
+    currentESCPWM = newESCPWM;
+    setPWM(ESC_CHANNEL, (uint16_t)currentESCPWM);
+  }
+  
+  // Debug específico do RC Control (apenas quando há mudanças)
+  if (servoChanged || escChanged) {
+    LOG_RC("RC Control - X:%d->%dμs%s, Y:%d->%dμs%s\n", 
+                  rawX, (uint16_t)currentServoPWM, servoChanged ? " ✓" : "",
+                  rawY, (uint16_t)currentESCPWM, escChanged ? " ✓" : "");
+  }
+  
+  lastPWMUpdate = millis();
 }
 
 void setup() {
