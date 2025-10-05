@@ -24,8 +24,8 @@ Resultado: Saltos de ~20μs por passo = movimento BRUTO
 
 ### 1. **Range Reduzido** (75% do total)
 ```cpp
-#define PWM_FINE_MIN 1125   // 1.125ms (era 1000ms)
-#define PWM_FINE_MAX 1875   // 1.875ms (era 2000ms)
+#define PWM_FINE_MIN 1000   // 1.125ms (era 1000ms)
+#define PWM_FINE_MAX 2000   // 1.875ms (era 2000ms)
 // Range: 750μs (era 1000μs) = movimento mais fino
 ```
 

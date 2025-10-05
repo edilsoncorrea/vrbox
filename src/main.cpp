@@ -131,17 +131,17 @@ static BLEUUID DESCRIPTOR_UUID("2902");
 #define PWM_MAX 2000    // 2ms - Posição máxima
 
 // RANGE REDUZIDO para movimento mais fino (75% do range total)
-#define PWM_FINE_MIN 1125   // 1.125ms - Mínimo para movimento fino (75% de 1500-1000 = 375μs)
-#define PWM_FINE_MAX 1875   // 1.875ms - Máximo para movimento fino (75% de 2000-1500 = 375μs)
+#define PWM_FINE_MIN 1000   // 1.125ms - Mínimo para movimento fino (75% de 1500-1000 = 375μs)
+#define PWM_FINE_MAX 2000   // 1.875ms - Máximo para movimento fino (75% de 2000-1500 = 375μs)
 
-// Zona morta MAIOR para evitar jitter (±15% do range do VRBOX)
-#define DEADBAND 6      // ±6 de 36 = ~15% (mais zona morta para movimento mais estável)
+// Zona morta REDUZIDA para retorno ao centro mais preciso
+#define DEADBAND 3      // ±3 de 36 = ~8% (reduzido para melhor retorno ao centro)
 
-// Filtro de suavização MUITO ALTO para movimento super fluído
-#define SMOOTHING_FACTOR 0.92f  // Muito suave, quase sem saltos
+// Filtro de suavização BALANCEADO para resposta rápida sem atraso
+#define SMOOTHING_FACTOR 0.75f  // Mais responsivo, menos atraso
 
-// Controle de timing MAIS RÁPIDO para resposta melhor
-#define PWM_UPDATE_INTERVAL 25  // Atualizar PWM a cada 25ms (40Hz) - mais responsivo
+// Controle de timing OTIMIZADO para resposta imediata
+#define PWM_UPDATE_INTERVAL 15  // Atualizar PWM a cada 15ms (66Hz) - muito responsivo
 
 // Valores PWM atuais (para suavização)
 float currentServoPWM = PWM_CENTER;
@@ -507,7 +507,9 @@ uint32_t microsToPWMValue(uint16_t micros) {
   // Calcular duty cycle para 50Hz com resolução de 10 bits
   // Period = 1/50 = 20ms = 20000μs
   // PWM Value = (micros / 20000) * 1023 (para 10 bits)
-  uint32_t pwmValue = (uint32_t)((micros * 1023UL) / 20000UL);
+  // Usar float para evitar arredondamento prematuro
+  float pwmFloat = ((float)micros / 20000.0f) * 1023.0f;
+  uint32_t pwmValue = (uint32_t)(pwmFloat + 0.5f);  // Arredondamento correto
   
   return pwmValue;
 }
@@ -520,9 +522,10 @@ void setPWM(uint8_t channel, uint16_t micros) {
   uint32_t pwmValue = microsToPWMValue(micros);
   ledcWrite(channel, pwmValue);
   
-  // Debug: mostrar valores PWM calculados
-  LOG_PWM("Canal %d: %dμs -> PWM: %d (%.1f%%)\n", 
-                channel, micros, pwmValue, (pwmValue * 100.0) / 1023.0);
+  // Debug: mostrar valores PWM calculados com precisão
+  float percentage = ((float)pwmValue / 1023.0f) * 100.0f;
+  LOG_PWM("Canal %d: %dμs -> PWM: %d (%.2f%%)\n", 
+                channel, micros, pwmValue, percentage);
 }
 
 // Função para mapear valor do joystick com CURVA SUAVE e RANGE REDUZIDO
@@ -558,19 +561,25 @@ uint16_t mapJoystickToPWM(int8_t joystickValue) {
   return constrain(pwmValue, PWM_FINE_MIN, PWM_FINE_MAX);
 }
 
-// Função para aplicar filtro de suavização ULTRA REFINADO
+// Função para aplicar filtro de suavização OTIMIZADO PARA RETORNO AO CENTRO
 float smoothPWM(float current, float target, float factor) {
   float diff = target - current;
   
-  // Se a diferença for muito pequena, não atualizar (evita jitter)
-  if (abs(diff) < 2.0f) {  // Reduzido de 5.0f para 2.0f - mais sensível
-    return current;
+  // RETORNO RÁPIDO AO CENTRO: se target é centro (1500), aplicar menos suavização
+  if (abs(target - PWM_CENTER) < 5.0f) {  // Se próximo ao centro
+    factor = 0.9f;  // Retorno rápido ao centro
   }
   
-  // Aplicar suavização progressiva: mais suave para pequenas diferenças
+  // Se a diferença for muito pequena, ainda aplicar mudança gradual (não parar)
+  if (abs(diff) < 1.0f) {  // Reduzido para 1.0f - mais sensível
+    return target;  // Ir direto ao target para pequenas diferenças
+  }
+  
+  // Aplicar suavização progressiva: MAIS responsivo para mudanças grandes
   float adaptiveFactor = factor;
-  if (abs(diff) < 10.0f) {
-    adaptiveFactor = factor * 0.5f;  // Ainda mais suave para pequenos movimentos
+  if (abs(diff) > 50.0f) {  // Para grandes mudanças, ser mais responsivo
+    adaptiveFactor = factor * 1.5f;  // Aumentar responsividade
+    if (adaptiveFactor > 0.95f) adaptiveFactor = 0.95f;  // Limitar
   }
   
   return current + diff * adaptiveFactor;
@@ -597,9 +606,13 @@ void updateRCControls() {
   float newServoPWM = smoothPWM(currentServoPWM, targetServoPWM, SMOOTHING_FACTOR);
   float newESCPWM = smoothPWM(currentESCPWM, targetESCPWM, SMOOTHING_FACTOR);
   
+  // DETECÇÃO ESPECIAL DE RETORNO AO CENTRO - forçar atualização imediata
+  bool centeringServo = (abs(targetServoPWM - PWM_CENTER) < 5.0f) && (abs(currentServoPWM - PWM_CENTER) > 10.0f);
+  bool centeringESC = (abs(targetESCPWM - PWM_CENTER) < 5.0f) && (abs(currentESCPWM - PWM_CENTER) > 10.0f);
+  
   // Só atualizar se houve mudança significativa (evita spam de comandos)
-  bool servoChanged = abs(newServoPWM - currentServoPWM) >= 0.5f;  // Mais sensível (0.5μs)
-  bool escChanged = abs(newESCPWM - currentESCPWM) >= 0.5f;
+  bool servoChanged = abs(newServoPWM - currentServoPWM) >= 0.2f || centeringServo;  // Muito sensível (0.2μs)
+  bool escChanged = abs(newESCPWM - currentESCPWM) >= 0.2f || centeringESC;
   
   if (servoChanged) {
     currentServoPWM = newServoPWM;
@@ -611,11 +624,13 @@ void updateRCControls() {
     setPWM(ESC_CHANNEL, (uint16_t)currentESCPWM);
   }
   
-  // Debug específico do RC Control (apenas quando há mudanças) - MODO REFINADO
+  // Debug específico do RC Control (apenas quando há mudanças) - MODO RESPONSIVO
   if (servoChanged || escChanged) {
-    LOG_RC("RC Fine Control - X:%d->%dμs%s, Y:%d->%dμs%s [Range: %d-%dμs]\n", 
+    LOG_RC("RC Responsive - X:%d->%dμs%s%s, Y:%d->%dμs%s%s [Range: %d-%dμs]\n", 
                   rawX, (uint16_t)currentServoPWM, servoChanged ? " ✓" : "",
+                  centeringServo ? " 🎯" : "",
                   rawY, (uint16_t)currentESCPWM, escChanged ? " ✓" : "",
+                  centeringESC ? " 🎯" : "",
                   PWM_FINE_MIN, PWM_FINE_MAX);
   }
   
